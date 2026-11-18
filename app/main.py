@@ -2,7 +2,7 @@ import json
 import os
 
 import requests
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 
 DOCKER = os.environ.get("DOCKER_API_URL", "http://127.0.0.1:2375")
 TIMEOUT = 5
@@ -35,3 +35,24 @@ def lister_containers():
     )
     reponse.raise_for_status()
     return [formater(c) for c in reponse.json()]
+
+
+@app.get("/containers/{identifiant}")
+def lire_container(identifiant: str):
+    reponse = requests.get(f"{DOCKER}/containers/{identifiant}/json", timeout=TIMEOUT)
+    if reponse.status_code == 404:
+        raise HTTPException(status_code=404, detail="Conteneur inconnu")
+    reponse.raise_for_status()
+    detail = reponse.json()
+
+    # "Labels" peut valoir None : on se ramène à un dictionnaire vide
+    etiquettes = detail["Config"].get("Labels") or {}
+    if etiquettes.get("adminapi.managed") != "true":
+        raise HTTPException(status_code=404, detail="Conteneur inconnu")
+
+    return {
+        "id": detail["Id"],
+        "name": detail["Name"].lstrip("/"),
+        "image": detail["Config"]["Image"],
+        "state": detail["State"]["Status"],
+    }
