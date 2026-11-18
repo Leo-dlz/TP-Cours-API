@@ -7,6 +7,9 @@ import requests
 
 DOCKER = os.environ.get("DOCKER_API_URL", "http://127.0.0.1:2375")
 TIMEOUT = 5
+NETBOX = os.environ.get("NETBOX_URL", "http://127.0.0.1:8080")
+JETON = os.environ["NETBOX_TOKEN"]  
+
 
 def lister_conteneurs(session):
     reponse = session.get(
@@ -50,6 +53,31 @@ def releve_docker(session):
         resultat.append(entree)
     return resultat
 
+def releve_netbox(session):
+    entetes = {"Authorization": f"Bearer {JETON}", "Accept": "application/json"}
+
+    reponse = session.get(f"{NETBOX}/api/status/", headers=entetes, timeout=TIMEOUT)
+    reponse.raise_for_status()
+    version = reponse.json()["netbox-version"]
+
+    url = f"{NETBOX}/api/core/object-types/?limit=50"
+    compte_annonce = None
+    nombre = 0
+    while url:
+        reponse = session.get(url, headers=entetes, timeout=TIMEOUT)
+        reponse.raise_for_status()
+        page = reponse.json()
+        if compte_annonce is None:
+            compte_annonce = page["count"]
+        nombre += len(page["results"])
+        url = page["next"]      # None quand on est à la dernière page
+
+    return {
+        "version": version,
+        "types_objets": nombre,
+        "count_annonce": compte_annonce,
+    }
+
 def afficher_resume(inventaire):
     conteneurs = inventaire["conteneurs"]
     demarres = [c for c in conteneurs if c["etat"] == "running"]
@@ -60,12 +88,15 @@ def afficher_resume(inventaire):
         if c["cpu_pourcent"] is not None:
             ligne += f" CPU {c['cpu_pourcent']:6.2f} %  RAM {c['memoire_mo']:7.1f} Mo"
         print(ligne)
+    nb = inventaire["netbox"]
+    print(f"\nNetBox {nb['version']} : {nb['types_objets']} types d'objets (count annoncé : {nb['count_annonce']})")
 
 def main():
     session = requests.Session()
     inventaire = {
         "date": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "conteneurs": releve_docker(session),
+        "netbox": releve_netbox(session),
     }
     with open("inventaire.json", "w", encoding="utf-8") as f:
         json.dump(inventaire, f, indent=2, ensure_ascii=False)
