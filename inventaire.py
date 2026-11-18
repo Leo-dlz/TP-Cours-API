@@ -1,5 +1,8 @@
+import json
 import os
 import sys
+from datetime import datetime, timezone
+
 import requests
 
 DOCKER = os.environ.get("DOCKER_API_URL", "http://127.0.0.1:2375")
@@ -31,15 +34,42 @@ def stats_conteneur(session, conteneur_id):
     memoire_mo = stats["memory_stats"]["usage"] / 1024 / 1024
     return round(pourcent, 2), round(memoire_mo, 1)
 
+def releve_docker(session):
+    resultat = []
+    for c in lister_conteneurs(session):
+        entree = {
+            "id": c["Id"],
+            "nom": c["Names"][0].lstrip("/"),
+            "image": c["Image"],
+            "etat": c["State"],
+            "cpu_pourcent": None,
+            "memoire_mo": None,
+        }
+        if c["State"] == "running":
+            entree["cpu_pourcent"], entree["memoire_mo"] = stats_conteneur(session, c["Id"])
+        resultat.append(entree)
+    return resultat
+
+def afficher_resume(inventaire):
+    conteneurs = inventaire["conteneurs"]
+    demarres = [c for c in conteneurs if c["etat"] == "running"]
+    print(f"Relevé du {inventaire['date']}")
+    print(f"{len(conteneurs)} conteneurs, dont {len(demarres)} démarrés\n")
+    for c in conteneurs:
+        ligne = f"{c['nom']:30} {c['image']:30} {c['etat']:10}"
+        if c["cpu_pourcent"] is not None:
+            ligne += f" CPU {c['cpu_pourcent']:6.2f} %  RAM {c['memoire_mo']:7.1f} Mo"
+        print(ligne)
+
 def main():
     session = requests.Session()
-    for c in lister_conteneurs(session):
-        nom = c["Names"][0].lstrip("/")
-        ligne = f"{nom:30} {c['Image']:30} {c['State']:10}"
-        if c["State"] == "running":
-            cpu, memoire = stats_conteneur(session, c["Id"])
-            ligne += f" CPU {cpu:6.2f} %  RAM {memoire:7.1f} Mo"
-        print(ligne)
+    inventaire = {
+        "date": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "conteneurs": releve_docker(session),
+    }
+    with open("inventaire.json", "w", encoding="utf-8") as f:
+        json.dump(inventaire, f, indent=2, ensure_ascii=False)
+    afficher_resume(inventaire)
 
 if __name__ == "__main__":
     main()
