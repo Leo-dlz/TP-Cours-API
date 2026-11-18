@@ -8,7 +8,7 @@ import requests
 DOCKER = os.environ.get("DOCKER_API_URL", "http://127.0.0.1:2375")
 TIMEOUT = 5
 NETBOX = os.environ.get("NETBOX_URL", "http://127.0.0.1:8080")
-JETON = os.environ["NETBOX_TOKEN"]  
+JETON = os.environ.get("NETBOX_TOKEN")  # pas de valeur par défaut pour un secret
 
 
 def lister_conteneurs(session):
@@ -19,6 +19,7 @@ def lister_conteneurs(session):
     )
     reponse.raise_for_status()
     return reponse.json()
+
 
 def stats_conteneur(session, conteneur_id):
     reponse = session.get(
@@ -37,6 +38,7 @@ def stats_conteneur(session, conteneur_id):
     memoire_mo = stats["memory_stats"]["usage"] / 1024 / 1024
     return round(pourcent, 2), round(memoire_mo, 1)
 
+
 def releve_docker(session):
     resultat = []
     for c in lister_conteneurs(session):
@@ -52,6 +54,7 @@ def releve_docker(session):
             entree["cpu_pourcent"], entree["memoire_mo"] = stats_conteneur(session, c["Id"])
         resultat.append(entree)
     return resultat
+
 
 def releve_netbox(session):
     entetes = {"Authorization": f"Bearer {JETON}", "Accept": "application/json"}
@@ -70,13 +73,14 @@ def releve_netbox(session):
         if compte_annonce is None:
             compte_annonce = page["count"]
         nombre += len(page["results"])
-        url = page["next"]      # None quand on est à la dernière page
+        url = page["next"]  # None quand on est à la dernière page
 
     return {
         "version": version,
         "types_objets": nombre,
         "count_annonce": compte_annonce,
     }
+
 
 def afficher_resume(inventaire):
     conteneurs = inventaire["conteneurs"]
@@ -88,19 +92,36 @@ def afficher_resume(inventaire):
         if c["cpu_pourcent"] is not None:
             ligne += f" CPU {c['cpu_pourcent']:6.2f} %  RAM {c['memoire_mo']:7.1f} Mo"
         print(ligne)
+
     nb = inventaire["netbox"]
     print(f"\nNetBox {nb['version']} : {nb['types_objets']} types d'objets (count annoncé : {nb['count_annonce']})")
 
+
 def main():
+    if not JETON:
+        sys.exit("Erreur : la variable NETBOX_TOKEN n'est pas définie (chargez le .env).")
+
     session = requests.Session()
+
+    try:
+        conteneurs = releve_docker(session)
+    except requests.exceptions.RequestException as e:
+        sys.exit(f"Erreur : API Docker injoignable ou en erreur ({DOCKER}) : {e}")
+
+    try:
+        netbox = releve_netbox(session)
+    except requests.exceptions.RequestException as e:
+        sys.exit(f"Erreur : NetBox injoignable ou en erreur ({NETBOX}) : {e}")
+
     inventaire = {
         "date": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "conteneurs": releve_docker(session),
-        "netbox": releve_netbox(session),
+        "conteneurs": conteneurs,
+        "netbox": netbox,
     }
     with open("inventaire.json", "w", encoding="utf-8") as f:
         json.dump(inventaire, f, indent=2, ensure_ascii=False)
     afficher_resume(inventaire)
+
 
 if __name__ == "__main__":
     main()
